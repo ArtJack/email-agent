@@ -39,7 +39,6 @@ async function main(): Promise<void> {
     barronsDaily: [],
     usps: [],
     important: [],
-    noteworthy: [],
     lowCount: 0,
     spamCount: 0,
     errorCount: 0,
@@ -56,12 +55,12 @@ async function main(): Promise<void> {
     }
   }
 
-  const digest = formatDigestPlain(sections);
+  const usage = getTotalUsage();
+  const digest = formatDigestPlain(sections, usage);
   console.log("\n========== DIGEST ==========");
   console.log(digest);
   console.log("========== END ==========\n");
 
-  const usage = getTotalUsage();
   console.log("Token usage:", JSON.stringify(usage, null, 2));
   writeUsageLog(usage);
 
@@ -117,7 +116,7 @@ async function handleEmail(email: FetchedEmail, out: DigestSections): Promise<vo
   if (triage.route === "important") {
     out.important.push({ from: fromLabel, subject: email.subject, summary });
   } else {
-    out.noteworthy.push({ from: fromLabel, subject: email.subject, summary });
+    out.lowCount++;
   }
 }
 

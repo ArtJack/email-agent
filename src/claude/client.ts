@@ -26,6 +26,23 @@ export function getTotalUsage(): { byModel: Record<string, { in: number; out: nu
   return { byModel, calls: usageLog.length };
 }
 
+// Anthropic published pricing as of 2026-04 (USD per 1M tokens).
+// Update if Anthropic changes rates; unknown models fall back to Haiku pricing.
+const PRICES_PER_MTOK: Record<string, { in: number; out: number }> = {
+  "claude-opus-4-7": { in: 15, out: 75 },
+  "claude-sonnet-4-6": { in: 3, out: 15 },
+  "claude-haiku-4-5-20251001": { in: 1, out: 5 },
+};
+
+export function estimateCostUsd(usage: ReturnType<typeof getTotalUsage>): number {
+  let cost = 0;
+  for (const [model, counts] of Object.entries(usage.byModel)) {
+    const price = PRICES_PER_MTOK[model] ?? PRICES_PER_MTOK["claude-haiku-4-5-20251001"];
+    cost += (counts.in / 1_000_000) * price.in + (counts.out / 1_000_000) * price.out;
+  }
+  return cost;
+}
+
 export async function askClaude(opts: {
   model: string;
   system: string;
