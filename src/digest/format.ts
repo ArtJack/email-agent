@@ -1,5 +1,6 @@
 import { config } from "../config.js";
 import type { UspsExtract } from "../claude/usps-extractor.js";
+import { estimateCostUsd, getTotalUsage } from "../claude/client.js";
 
 export interface DigestSections {
   date: Date;
@@ -7,14 +8,28 @@ export interface DigestSections {
   barronsDaily: { subject: string; summary: string }[];
   usps: { subject: string; extract: UspsExtract }[];
   important: { from: string; subject: string; summary: string }[];
-  noteworthy: { from: string; subject: string; summary: string }[];
   lowCount: number;
   spamCount: number;
   errorCount: number;
   totalEmails: number;
 }
 
-export function formatDigestPlain(d: DigestSections): string {
+function formatTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : `${n}`;
+}
+
+function formatCostLine(usage: ReturnType<typeof getTotalUsage>): string {
+  const cost = estimateCostUsd(usage);
+  let totalIn = 0;
+  let totalOut = 0;
+  for (const counts of Object.values(usage.byModel)) {
+    totalIn += counts.in;
+    totalOut += counts.out;
+  }
+  return `💰 $${cost.toFixed(4)} · ${formatTokens(totalIn)} in / ${formatTokens(totalOut)} out · ${usage.calls} calls`;
+}
+
+export function formatDigestPlain(d: DigestSections, usage?: ReturnType<typeof getTotalUsage>): string {
   const lines: string[] = [];
   const dateStr = d.date.toLocaleDateString("en-US", {
     timeZone: config.timezone,
@@ -79,21 +94,16 @@ export function formatDigestPlain(d: DigestSections): string {
     lines.push("");
   }
 
-  if (d.noteworthy.length > 0) {
-    lines.push("━━━━━━━━━━━━━━━━━━━━");
-    lines.push(`📝 WORTH NOTING (${d.noteworthy.length})`);
-    lines.push("━━━━━━━━━━━━━━━━━━━━");
-    for (const e of d.noteworthy) {
-      lines.push(`• ${e.from}: ${e.summary}`);
-    }
-    lines.push("");
-  }
-
   const tail: string[] = [];
   if (d.lowCount > 0) tail.push(`+${d.lowCount} low-priority filed`);
   if (d.spamCount > 0) tail.push(`🗑 ${d.spamCount} spam/promo filtered`);
   if (d.errorCount > 0) tail.push(`⚠️ ${d.errorCount} processing errors`);
   if (tail.length > 0) lines.push(tail.join(" · "));
+
+  if (usage) {
+    lines.push("");
+    lines.push(formatCostLine(usage));
+  }
 
   return lines.join("\n");
 }
