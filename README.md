@@ -1,6 +1,6 @@
 # Email Agent
 
-A self-hosted AI email assistant that runs daily on a Mac mini, reads your inbox over IMAP, uses Claude to triage / summarize / deep-analyze, and delivers a single digest to Telegram. Zero server cost. Under $10/month in Claude API usage.
+A self-hosted AI email assistant that runs daily on a Mac mini, reads your inbox over IMAP, uses Claude to triage / summarize / deep-analyze, and delivers a single digest to Telegram. Zero server cost. Very low cost in Claude API usage (under $1 per month in my daily check 30+ mails).
 
 **Stack:** TypeScript (Node.js 20+) · Anthropic SDK · Yahoo IMAP (imapflow + mailparser) · SQLite (better-sqlite3) · Telegram Bot API · macOS launchd
 
