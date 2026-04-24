@@ -2,57 +2,37 @@ import { config } from "../config.js";
 import type { FetchedEmail } from "../email/imap.js";
 import { askClaude } from "./client.js";
 
-export type Route = "barrons_premium" | "barrons_daily" | "usps" | "spam" | "important" | "noteworthy" | "low";
+export type Route = "spam" | "important" | "low";
 
 export interface TriageResult {
   route: Route;
   reason: string;
 }
 
-export function hardMatchSender(email: FetchedEmail): Route | null {
-  const from = email.from.toLowerCase();
-  if (config.vipSenders.barronsPremium.includes(from)) return "barrons_premium";
-  if (config.vipSenders.barronsDaily.includes(from)) return "barrons_daily";
-  if (config.vipSenders.usps.includes(from)) return "usps";
-  return null;
-}
+const SYSTEM = `You classify a single email into exactly one of:
+- "important": action required, time-sensitive, personal, financial, security, or account-related — something a real person needs to see today
+- "low": newsletters, receipts, confirmations, routine notifications — legitimate but not worth reading
+- "spam": promotions, marketing, phishing, bulk junk
 
-const TRIAGE_SYSTEM = `You are an email triage assistant. Classify a single email into one of:
-- "spam": scam, phishing, marketing junk, unsolicited promotions, obvious bulk mail
-- "important": action required, time-sensitive, personal, financial, security, account-related, from a known person/business with real content
-- "noteworthy": legitimate but informational — newsletters, receipts, confirmations, notifications worth a one-line mention
-- "low": background notifications of zero interest (automated "email preferences updated", social media ambient noise, etc.)
+Return ONLY valid JSON: {"route":"...","reason":"<short phrase>"}`;
 
-Return ONLY valid JSON of shape: {"route":"...","reason":"<one short phrase>"}`;
-
-export async function triageEmail(email: FetchedEmail): Promise<TriageResult> {
-  const hard = hardMatchSender(email);
-  if (hard) return { route: hard, reason: "hard-matched VIP sender" };
-
+export async function triage(email: FetchedEmail): Promise<TriageResult> {
   const snippet = (email.text || stripHtml(email.html)).slice(0, 2000);
-  const user = `From: ${email.fromName} <${email.from}>
-Subject: ${email.subject}
-
-${snippet}`;
-
   const raw = await askClaude({
     model: config.models.triage,
-    system: TRIAGE_SYSTEM,
-    user,
+    system: SYSTEM,
+    user: `From: ${email.fromName} <${email.from}>\nSubject: ${email.subject}\n\n${snippet}`,
     maxTokens: 150,
   });
 
   const parsed = safeJson(raw);
-  if (!parsed || typeof parsed.route !== "string") {
-    return { route: "noteworthy", reason: "triage parse fallback" };
+  if (!parsed || !["spam", "important", "low"].includes(parsed.route ?? "")) {
+    return { route: "low", reason: "triage fallback" };
   }
-  const route = ["spam", "important", "noteworthy", "low"].includes(parsed.route)
-    ? (parsed.route as Route)
-    : "noteworthy";
-  return { route, reason: String(parsed.reason ?? "") };
+  return { route: parsed.route as Route, reason: String(parsed.reason ?? "") };
 }
 
-function stripHtml(html: string): string {
+export function stripHtml(html: string): string {
   return html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
@@ -70,5 +50,3 @@ function safeJson(raw: string): { route?: string; reason?: string } | null {
     return null;
   }
 }
-
-export { stripHtml };

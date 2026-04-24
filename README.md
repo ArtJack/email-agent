@@ -1,190 +1,87 @@
-# Email Agent
+# email-agent
 
-A self-hosted AI email assistant that runs daily on a Mac mini, reads your inbox over IMAP, uses Claude to triage / summarize / deep-analyze, and delivers a single digest to Telegram. Zero server cost. Very low cost in Claude API usage (under $1 per month in my daily check 30+ mails).
+A small Node script that reads my inbox, asks Claude what's worth reading, and sends a one-message digest to Telegram every morning. Runs on a Mac mini under my desk. Under $1 a month at my volume (~30 emails a day).
 
-**Stack:** TypeScript (Node.js 20+) · Anthropic SDK · Yahoo IMAP (imapflow + mailparser) · SQLite (better-sqlite3) · Telegram Bot API · macOS launchd
+## What it does
 
----
+Once a day it pulls the last ~26 hours of mail over IMAP, runs each message through Claude Haiku for a quick `important` / `low` / `spam` call, summarizes the important ones in one sentence, and posts the whole thing to Telegram.
 
-## Why this exists
-
-Inbox triage eats 20–30 minutes every morning and 80% of what arrives is noise. This agent compresses a day's mail into one scannable Telegram message with:
-- **Laconic, action-first analysis** of Barron's market newsletters (tagged `📈 BUY`, `⚠️ TRIM`, `🛢 WATCH`, etc. — no hedge-speak)
-- **USPS Informed Delivery extraction** — what mail is arriving today
-- **Haiku-cheap triage** of everything else — spam auto-filed, important items summarized in one sentence
-- **All results pushed to Telegram**, delivered while I'm having coffee
-
----
-
-## Architecture
+A digest looks roughly like this:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Mac mini (24/7)                                            │
-│                                                             │
-│  launchd (10:00 daily) --> node dist/run.js                 │
-│                                │                            │
-│                                v                            │
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────────┐    │
-│  │ Yahoo    │-->│ Deterministic│-->│ Route handler:   │    │
-│  │ IMAP     │   │ VIP matcher  │   │ • Barron's       │    │
-│  │ (26h     │   │ + Haiku      │   │   premium (Opus) │    │
-│  │  window) │   │ triage for   │   │ • Barron's       │    │
-│  │          │   │ rest         │   │   daily (Haiku)  │    │
-│  └──────────┘   └──────────────┘   │ • USPS (Haiku)   │    │
-│       │                            │ • Generic summary│    │
-│       │                            │   (Haiku)        │    │
-│       v                            └────────┬─────────┘    │
-│  SQLite (dedupe by                          v              │
-│  Message-Id across runs)       Telegram Bot sendMessage    │
-└─────────────────────────────────────────────────────────────┘
+Daily Email Digest — Thu, Apr 23, 2026
+10 email(s) in the last 26h
+
+Important (2):
+
+• ACME Bank: April statement is available, no action required.
+  — Your April statement is ready
+• Jane Doe: wants a 30-min meeting Friday 2pm about the Q2 plan.
+  — Q2 planning — 30 min?
+
+Filtered: 6 low-priority · 2 spam/promo
+
+$0.0224 · 20.6K in / 359 out · 15 calls
 ```
 
-### Key design choices
+That last line is the real Claude spend for the run — a couple of cents, typically.
 
-| Decision | Choice | Why |
-|---|---|---|
-| **Hosting** | Self-hosted on Mac mini | No cloud runtime cost; the machine is already on |
-| **Scheduler** | macOS `launchd` (not cron) | Survives reboots; `StartCalendarInterval` handles missed runs on wake |
-| **Email access** | Yahoo IMAP + App Password | 5-min setup vs. full OAuth; no client registration required |
-| **State** | Single SQLite file | Dedupe across re-runs with zero config or running daemon |
-| **Model tiering** | 3-tier Claude routing | Opus where depth matters, Haiku everywhere else — 10× cost difference |
-| **Output format** | Strict bullet tags (`📈 BUY`/`⚠️ TRIM`) | Forces the model to commit to an action; prevents wall-of-text drift |
-| **Safety** | `.env` never committed; secrets never pass through chat | Credentials stay on the local machine |
+## Stack
 
-### Model tiering
-
-The system routes each email to a different Claude model based on expected value:
-
-- **`barronsstats@barrons.com`** → **Claude Opus 4.7** — weekly premium market analysis; worth the deep reasoning
-- **`access@barrons.com`** → **Claude Haiku 4.5** — daily high-volume; one-sentence compression only
-- **VIP USPS scans** → **Claude Haiku 4.5** — structured JSON extraction, Haiku is plenty
-- **Everything else** → **Claude Haiku 4.5** — triage (spam/important/noteworthy/low) + short summary
-
-Typical monthly cost: **$5–10**, depending on how often Barron's Premium fires and how chatty your inbox is. Usage is logged to `logs/usage.jsonl` per run for observability.
-
----
+TypeScript on Node 20, `imapflow` + `mailparser` for mail, `@anthropic-ai/sdk` for Claude, `better-sqlite3` for a small dedupe table so re-runs don't double-notify, the Telegram Bot API for delivery, and `launchd` for the schedule. No cloud, no Docker, one `.env` file.
 
 ## Setup
 
-Assumes macOS with Homebrew and Node.js 20+ installed. On Apple Silicon, `node` lives at `/opt/homebrew/bin/node`.
+You need:
 
-### 1. Gather credentials
+- An Anthropic API key — https://console.anthropic.com/settings/keys
+- IMAP access on your mail account (Yahoo needs an App Password; enable 2FA first)
+- A Telegram bot token (`/newbot` to `@BotFather`) and your chat ID (message `@userinfobot`)
 
-| Secret | Where |
-|---|---|
-| Claude API key | https://console.anthropic.com/settings/keys |
-| Yahoo App Password | https://login.yahoo.com/account/security (2-Step Verification required first) |
-| Telegram Bot Token | Message [@BotFather](https://t.me/BotFather) → `/newbot` |
-| Telegram Chat ID | Message [@userinfobot](https://t.me/userinfobot) — it replies with your ID |
-
-### 2. Clone and install
+Then:
 
 ```bash
-git clone https://github.com/<your-username>/email-agent.git
+git clone https://github.com/ArtJack/email-agent.git
 cd email-agent
 npm install
-cp .env.example .env
-# Edit .env with the secrets from step 1
+cp .env.example .env          # fill in the secrets
+./run.sh test-connection      # does IMAP login work?
+./run.sh dry-run              # run the whole pipeline, print the digest, don't send
+./run.sh dev                  # for real — sends to Telegram
 ```
 
-### 3. Verify
+## Running it every morning
+
+On macOS there's a LaunchAgent:
 
 ```bash
-./run.sh test-connection   # "IMAP OK. INBOX: N messages, M unread."
-./run.sh dry-run           # runs full pipeline, prints digest, does NOT send to Telegram
-./run.sh dev               # real run — sends to Telegram
+npm run build
+./scripts/install-launchd.sh           # fires daily at 10:00
+./scripts/install-launchd.sh uninstall # removes it
 ```
 
-### 4. Schedule (daily at 10:00)
-
-```bash
-npm run build                   # compile TS -> dist/run.js
-./scripts/install-launchd.sh    # installs per-user LaunchAgent
-```
-
-Verify:
-```bash
-launchctl list | grep email
-tail -f logs/stdout.log
-```
-
-Uninstall:
-```bash
-./scripts/install-launchd.sh uninstall
-```
-
----
-
-## Usage
-
-`run.sh` is immune to directory mistakes — it always runs from the project folder regardless of where you call it.
-
-| Command | Purpose |
-|---|---|
-| `./run.sh dry-run` | Full pipeline, print digest, don't send |
-| `./run.sh dev` | Real run — send to Telegram |
-| `./run.sh test-connection` | Verify IMAP credentials only |
-| `./run.sh build` | Compile TypeScript |
-| `LOOKBACK_HOURS=4 ./run.sh dry-run` | Shorter window for cheap testing |
-
----
-
-## Project layout
+On Linux, cron is fine:
 
 ```
-email-agent/
-├── src/
-│   ├── run.ts                     # Entry point, orchestration, error isolation
-│   ├── config.ts                  # Env var loading + fail-fast validation
-│   ├── email/imap.ts              # Yahoo IMAP fetch (imapflow + mailparser)
-│   ├── state/db.ts                # SQLite dedupe (Message-Id tracking)
-│   ├── claude/
-│   │   ├── client.ts              # Anthropic SDK wrapper + usage accounting
-│   │   ├── triage.ts              # Haiku classifier: spam/important/noteworthy/low
-│   │   ├── barrons-analyst.ts     # Opus deep-dive + Haiku one-liner
-│   │   ├── usps-extractor.ts      # Structured JSON from USPS scans
-│   │   └── generic-summary.ts     # One-sentence summary of non-VIP mail
-│   ├── telegram/send.ts           # Bot API with 4000-char chunking
-│   └── digest/format.ts           # Compose the Telegram message
-├── launchd/email-agent.plist.template
-├── scripts/install-launchd.sh
-├── run.sh                         # Path-safe npm wrapper
-└── data/                          # SQLite state (gitignored)
+0 10 * * *  cd /path/to/email-agent && node dist/run.js
 ```
 
----
+## How it decides what's important
 
-## Tuning
+Triage is a single Haiku call per email with this prompt:
 
-All knobs are in `.env`, so changing cost/quality tradeoffs doesn't need a code change:
+> You classify a single email into exactly one of: important, low, spam.
 
-```env
-# Send the daily Barron's through Opus too (higher cost, deeper analysis)
-BARRONS_DAILY_MODEL=claude-opus-4-7
+That's it. Haiku is cheap enough that running it on every email is still pennies, and it's correct often enough that the digest actually saves me time. The prompt is in `src/claude/triage.ts` if you want to make it stricter.
 
-# Or force everything to Haiku for minimum cost
-BARRONS_PREMIUM_MODEL=claude-haiku-4-5-20251001
+If the triage returns `important`, a second Haiku call writes the one-sentence summary. Everything else gets counted but not displayed.
 
-# Look back 48h instead of 26h (catches weekend backlog on Monday)
-LOOKBACK_HOURS=48
-```
+## Notes / things I'd change
 
-VIP sender addresses and prompt personas are in [`src/config.ts`](src/config.ts) and [`src/claude/barrons-analyst.ts`](src/claude/barrons-analyst.ts).
-
----
-
-## Troubleshooting
-
-**`Missing required env var: ANTHROPIC_API_KEY`** — your shell has an empty global `ANTHROPIC_API_KEY=""` exported (e.g. from an old `~/.zshrc`). `dotenv` respects existing env vars by default; this project forces `override: true` in `src/config.ts`. If still failing, `unset ANTHROPIC_API_KEY` and re-run.
-
-**Yahoo `Invalid credentials`** — App Password must be 16 chars, no spaces or dashes. Regenerate via Yahoo security settings.
-
-**Telegram `400 chat not found`** — you must send a message *to* your bot from your personal account before its chat ID is discoverable. The `@userinfobot` method is simpler.
-
-**launchd agent not firing** — `launchctl list | grep email`. A nonzero exit status shows in the second column; check `logs/stderr.log`. The Mac must be awake at 10:00 (macOS queues missed runs on wake, but sleep/hibernate kills the timer).
-
----
+- Only tested against Yahoo. IMAP is generic, so Gmail / Fastmail / anything IMAPS should work — change `IMAP_HOST` in `.env`.
+- No retries on a failed Telegram or IMAP call. If a run fails I just catch it the next morning. SQLite remembers which message-ids have been processed so reruns are idempotent.
+- No allowlist for priority senders yet. Would be useful but I haven't needed one.
+- The cost model is baked into `src/claude/client.ts` — if Anthropic changes prices, update it there.
 
 ## License
 

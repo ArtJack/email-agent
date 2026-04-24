@@ -18,11 +18,11 @@ export const config = {
   anthropicApiKey: required("ANTHROPIC_API_KEY"),
 
   imap: {
-    host: "imap.mail.yahoo.com",
-    port: 993,
+    host: optional("IMAP_HOST", "imap.mail.yahoo.com"),
+    port: Number(optional("IMAP_PORT", "993")),
     secure: true,
-    user: required("YAHOO_USER"),
-    pass: required("YAHOO_APP_PASSWORD"),
+    user: required("IMAP_USER"),
+    pass: required("IMAP_PASSWORD"),
   },
 
   telegram: {
@@ -32,26 +32,9 @@ export const config = {
 
   models: {
     triage: optional("TRIAGE_MODEL", "claude-haiku-4-5-20251001"),
-    barronsPremium: optional("BARRONS_PREMIUM_MODEL", "claude-opus-4-7"),
-    barronsDaily: optional("BARRONS_DAILY_MODEL", "claude-haiku-4-5-20251001"),
     summary: optional("SUMMARY_MODEL", "claude-haiku-4-5-20251001"),
   },
 
   lookbackHours: Number(optional("LOOKBACK_HOURS", "26")),
   timezone: optional("TZ", "America/New_York"),
-
-  vipSenders: {
-    barronsPremium: ["barronsstats@barrons.com"],
-    barronsDaily: ["access@barrons.com"],
-    usps: ["uspsinformeddelivery@email.informeddelivery.usps.com"],
-  },
 };
-
-export function validateConfigOrExit(): void {
-  try {
-    void config.imap.user;
-  } catch (err) {
-    console.error((err as Error).message);
-    process.exit(1);
-  }
-}

@@ -4,11 +4,9 @@ import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { fetchRecentEmails, testConnection, type FetchedEmail } from "./email/imap.js";
 import { isProcessed, markProcessed, cleanupOldRows, closeDb } from "./state/db.js";
-import { triageEmail, hardMatchSender } from "./claude/triage.js";
-import { analyzeBarronsPremium, summarizeBarronsDaily } from "./claude/barrons-analyst.js";
-import { extractUsps } from "./claude/usps-extractor.js";
-import { summarizeGeneric } from "./claude/generic-summary.js";
-import { formatDigestPlain, type DigestSections } from "./digest/format.js";
+import { triage } from "./claude/triage.js";
+import { summarize } from "./claude/summary.js";
+import { formatDigest, type DigestSections } from "./digest/format.js";
 import { sendTelegram } from "./telegram/send.js";
 import { getTotalUsage } from "./claude/client.js";
 
@@ -25,7 +23,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`[${new Date().toISOString()}] Starting run${DRY_RUN ? " (DRY RUN)" : ""}`);
+  console.log(`[${new Date().toISOString()}] Starting run${DRY_RUN ? " (dry-run)" : ""}`);
 
   const emails = await fetchRecentEmails(config.lookbackHours);
   console.log(`Fetched ${emails.length} email(s) from the last ${config.lookbackHours}h`);
@@ -35,9 +33,6 @@ async function main(): Promise<void> {
 
   const sections: DigestSections = {
     date: new Date(),
-    barronsPremium: [],
-    barronsDaily: [],
-    usps: [],
     important: [],
     lowCount: 0,
     spamCount: 0,
@@ -51,26 +46,23 @@ async function main(): Promise<void> {
       if (!DRY_RUN) markProcessed(email.messageId, "done");
     } catch (err) {
       sections.errorCount++;
-      console.error(`Error handling ${email.subject} from ${email.from}:`, (err as Error).message);
+      console.error(`Error handling "${email.subject}" from ${email.from}:`, (err as Error).message);
     }
   }
 
   const usage = getTotalUsage();
-  const digest = formatDigestPlain(sections, usage);
-  console.log("\n========== DIGEST ==========");
-  console.log(digest);
-  console.log("========== END ==========\n");
+  const digest = formatDigest(sections, usage);
+  console.log("\n" + digest + "\n");
 
-  console.log("Token usage:", JSON.stringify(usage, null, 2));
   writeUsageLog(usage);
 
   if (DRY_RUN) {
-    console.log("DRY RUN — not sending to Telegram.");
+    console.log("Dry-run — not sending to Telegram.");
   } else if (fresh.length === 0) {
     console.log("No new emails — skipping Telegram send.");
   } else {
     await sendTelegram(digest);
-    console.log("Digest sent to Telegram.");
+    console.log("Digest sent.");
   }
 
   cleanupOldRows(90);
@@ -78,46 +70,28 @@ async function main(): Promise<void> {
 }
 
 async function handleEmail(email: FetchedEmail, out: DigestSections): Promise<void> {
-  const fromLabel = email.fromName ? `${email.fromName}` : email.from;
+  const { route } = await triage(email);
 
-  const hard = hardMatchSender(email);
-  if (hard === "barrons_premium") {
-    const analysis = await analyzeBarronsPremium(email);
-    out.barronsPremium.push({ subject: email.subject, analysis });
-    return;
-  }
-  if (hard === "barrons_daily") {
-    const summary = await summarizeBarronsDaily(email);
-    out.barronsDaily.push({ subject: email.subject, summary });
-    return;
-  }
-  if (hard === "usps") {
-    const extract = await extractUsps(email);
-    out.usps.push({ subject: email.subject, extract });
-    return;
-  }
-
-  const triage = await triageEmail(email);
-  if (triage.route === "spam") {
+  if (route === "spam") {
     out.spamCount++;
     return;
   }
-  if (triage.route === "low") {
+  if (route === "low") {
     out.lowCount++;
     return;
   }
 
-  const summary = await summarizeGeneric(email);
+  const summary = await summarize(email);
   if (summary.trim().toUpperCase().startsWith("SKIP")) {
     out.lowCount++;
     return;
   }
 
-  if (triage.route === "important") {
-    out.important.push({ from: fromLabel, subject: email.subject, summary });
-  } else {
-    out.lowCount++;
-  }
+  out.important.push({
+    from: email.fromName || email.from,
+    subject: email.subject,
+    summary,
+  });
 }
 
 function writeUsageLog(usage: ReturnType<typeof getTotalUsage>): void {
@@ -131,6 +105,6 @@ function writeUsageLog(usage: ReturnType<typeof getTotalUsage>): void {
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error("Fatal:", err);
   process.exit(1);
 });

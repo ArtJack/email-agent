@@ -3,20 +3,16 @@ import type { FetchedEmail } from "../email/imap.js";
 import { askClaude } from "./client.js";
 import { stripHtml } from "./triage.js";
 
-const SUMMARY_SYSTEM = `You are summarizing a single email for a busy professional's daily digest.
+const SYSTEM = `Summarize this email in ONE sentence (max 25 words) that tells the reader what it is and whether they need to act.
 
-Write ONE sentence (max 25 words) that captures:
-- What it is
-- What matters about it (action required? just informational?)
+No greeting, no preamble, no "the email says". Just the sentence. If it's pure marketing with nothing useful, return: SKIP`;
 
-No greeting, no preamble, no "the email says". Just the sentence. If the email is pure marketing with no useful content, return: SKIP`;
-
-export async function summarizeGeneric(email: FetchedEmail): Promise<string> {
+export async function summarize(email: FetchedEmail): Promise<string> {
   const body = email.text || stripHtml(email.html);
   const snippet = body.slice(0, 3000);
   const result = await askClaude({
     model: config.models.summary,
-    system: SUMMARY_SYSTEM,
+    system: SYSTEM,
     user: `From: ${email.fromName} <${email.from}>\nSubject: ${email.subject}\n\n${snippet}`,
     maxTokens: 120,
   });
