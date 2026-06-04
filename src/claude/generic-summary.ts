@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import type { FetchedEmail } from "../email/imap.js";
-import { askClaude } from "./client.js";
+import { askModel } from "./client.js";
 import { stripHtml } from "./triage.js";
 
 const SUMMARY_SYSTEM = `You are summarizing a single email for a busy professional's daily digest.
@@ -14,7 +14,7 @@ No greeting, no preamble, no "the email says". Just the sentence. If the email i
 export async function summarizeGeneric(email: FetchedEmail): Promise<string> {
   const body = email.text || stripHtml(email.html);
   const snippet = body.slice(0, 3000);
-  const result = await askClaude({
+  const result = await askModel({
     model: config.models.summary,
     system: SUMMARY_SYSTEM,
     user: `From: ${email.fromName} <${email.from}>\nSubject: ${email.subject}\n\n${snippet}`,

@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+dotenv.config({ override: true, quiet: true });
 
 function required(name: string): string {
   const v = process.env[name];
@@ -14,9 +14,9 @@ function optional(name: string, fallback: string): string {
   return v && v.trim() !== "" ? v.trim() : fallback;
 }
 
-export const config = {
-  anthropicApiKey: required("ANTHROPIC_API_KEY"),
+const timezone = optional("TZ", "America/New_York");
 
+export const config = {
   imap: {
     host: "imap.mail.yahoo.com",
     port: 993,
@@ -30,15 +30,24 @@ export const config = {
     chatId: required("TELEGRAM_CHAT_ID"),
   },
 
+  litellm: {
+    baseUrl: optional("LITELLM_BASE_URL", "http://192.168.1.159:4000"),
+    apiKey: optional("LITELLM_MASTER_KEY", ""),
+  },
+
   models: {
-    triage: optional("TRIAGE_MODEL", "claude-haiku-4-5-20251001"),
-    barronsPremium: optional("BARRONS_PREMIUM_MODEL", "claude-opus-4-7"),
-    barronsDaily: optional("BARRONS_DAILY_MODEL", "claude-haiku-4-5-20251001"),
-    summary: optional("SUMMARY_MODEL", "claude-haiku-4-5-20251001"),
+    triage: optional("TRIAGE_MODEL", "llama3.1"),
+    barronsPremium: optional("BARRONS_PREMIUM_MODEL", "llama3.1"),
+    barronsDaily: optional("BARRONS_DAILY_MODEL", "llama3.1"),
+    summary: optional("SUMMARY_MODEL", "llama3.1"),
   },
 
   lookbackHours: Number(optional("LOOKBACK_HOURS", "26")),
-  timezone: optional("TZ", "America/New_York"),
+  timezone,
+  schedule: {
+    hour: Number(optional("SCHEDULE_HOUR", "10")),
+    timezone: optional("SCHEDULE_TZ", timezone),
+  },
 
   vipSenders: {
     barronsPremium: ["barronsstats@barrons.com"],

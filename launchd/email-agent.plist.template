@@ -8,8 +8,15 @@
   <key>ProgramArguments</key>
   <array>
     <string>__NODE_BIN__</string>
-    <string>__PROJECT_DIR__/dist/run.js</string>
+    <string>__RUNTIME_DIR__/dist/run.cjs</string>
+    <string>--scheduled</string>
   </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>3600</integer>
 
   <key>StartCalendarInterval</key>
   <dict>
@@ -19,17 +26,14 @@
     <integer>0</integer>
   </dict>
 
-  <key>RunAtLoad</key>
-  <false/>
-
   <key>StandardOutPath</key>
-  <string>__PROJECT_DIR__/logs/stdout.log</string>
+  <string>__LOG_DIR__/stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>__PROJECT_DIR__/logs/stderr.log</string>
+  <string>__LOG_DIR__/stderr.log</string>
 
   <key>WorkingDirectory</key>
-  <string>__PROJECT_DIR__</string>
+  <string>__RUNTIME_DIR__</string>
 
   <key>EnvironmentVariables</key>
   <dict>

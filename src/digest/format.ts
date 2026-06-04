@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import type { UspsExtract } from "../claude/usps-extractor.js";
-import { estimateCostUsd, getTotalUsage } from "../claude/client.js";
+import { getTotalUsage } from "../claude/client.js";
 
 export interface DigestSections {
   date: Date;
@@ -19,14 +19,13 @@ function formatTokens(n: number): string {
 }
 
 function formatCostLine(usage: ReturnType<typeof getTotalUsage>): string {
-  const cost = estimateCostUsd(usage);
   let totalIn = 0;
   let totalOut = 0;
   for (const counts of Object.values(usage.byModel)) {
     totalIn += counts.in;
     totalOut += counts.out;
   }
-  return `💰 $${cost.toFixed(4)} · ${formatTokens(totalIn)} in / ${formatTokens(totalOut)} out · ${usage.calls} calls`;
+  return `🦙 Ollama local · ${formatTokens(totalIn)} in / ${formatTokens(totalOut)} out · ${usage.calls} calls`;
 }
 
 export function formatDigestPlain(d: DigestSections, usage?: ReturnType<typeof getTotalUsage>): string {

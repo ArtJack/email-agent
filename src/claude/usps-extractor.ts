@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import type { FetchedEmail } from "../email/imap.js";
-import { askClaude } from "./client.js";
+import { askModel } from "./client.js";
 import { stripHtml } from "./triage.js";
 
 const USPS_SYSTEM = `You extract the list of expected mail pieces from a USPS Informed Delivery email.
@@ -28,7 +28,7 @@ export interface UspsExtract {
 
 export async function extractUsps(email: FetchedEmail): Promise<UspsExtract> {
   const body = email.text || stripHtml(email.html);
-  const raw = await askClaude({
+  const raw = await askModel({
     model: config.models.summary,
     system: USPS_SYSTEM,
     user: `Subject: ${email.subject}\n\n${body.slice(0, 15000)}`,

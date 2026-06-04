@@ -1,7 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config.js";
-
-export const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
 
 export interface Usage {
   input_tokens: number;
@@ -26,41 +23,89 @@ export function getTotalUsage(): { byModel: Record<string, { in: number; out: nu
   return { byModel, calls: usageLog.length };
 }
 
-// Anthropic published pricing as of 2026-04 (USD per 1M tokens).
-// Update if Anthropic changes rates; unknown models fall back to Haiku pricing.
-const PRICES_PER_MTOK: Record<string, { in: number; out: number }> = {
-  "claude-opus-4-7": { in: 15, out: 75 },
-  "claude-sonnet-4-6": { in: 3, out: 15 },
-  "claude-haiku-4-5-20251001": { in: 1, out: 5 },
-};
-
-export function estimateCostUsd(usage: ReturnType<typeof getTotalUsage>): number {
-  let cost = 0;
-  for (const [model, counts] of Object.entries(usage.byModel)) {
-    const price = PRICES_PER_MTOK[model] ?? PRICES_PER_MTOK["claude-haiku-4-5-20251001"];
-    cost += (counts.in / 1_000_000) * price.in + (counts.out / 1_000_000) * price.out;
-  }
-  return cost;
+interface OpenAIChatResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  error?: { message?: string } | string;
 }
 
-export async function askClaude(opts: {
+const MAX_ATTEMPTS = 3;
+const REQUEST_TIMEOUT_MS = 120_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// Routes through the LiteLLM proxy (OpenAI-compatible) on the Alienware AI lab.
+// LiteLLM maps model aliases (e.g. "llama3.1") to local Ollama by default and
+// only to paid providers when explicitly requested — keeping inference free.
+//
+// Transport over the Windows netsh portproxy + WSL2 NAT can occasionally drop a
+// reused keep-alive socket ("fetch failed"), so transient failures (network /
+// timeout / 5xx) are retried with backoff. Client errors (4xx) fail fast.
+export async function askModel(opts: {
   model: string;
   system: string;
   user: string;
   maxTokens?: number;
 }): Promise<string> {
-  const resp = await anthropic.messages.create({
+  const body = JSON.stringify({
     model: opts.model,
+    messages: [
+      { role: "system", content: opts.system },
+      { role: "user", content: opts.user },
+    ],
+    temperature: 0.1,
     max_tokens: opts.maxTokens ?? 1024,
-    system: opts.system,
-    messages: [{ role: "user", content: opts.user }],
   });
-  recordUsage({
-    input_tokens: resp.usage.input_tokens,
-    output_tokens: resp.usage.output_tokens,
-    model: opts.model,
-  });
-  const first = resp.content[0];
-  if (first?.type !== "text") return "";
-  return first.text;
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${config.litellm.baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.litellm.apiKey}`,
+        },
+        body,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // Transport-level failure (fetch failed / timeout / connection reset).
+      lastErr = err;
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(attempt * 750);
+        continue;
+      }
+      break;
+    }
+
+    if (!res.ok) {
+      const detail = await res.text();
+      if (res.status >= 500 && attempt < MAX_ATTEMPTS) {
+        lastErr = new Error(`LiteLLM chat failed: ${res.status} ${detail}`);
+        await sleep(attempt * 750);
+        continue;
+      }
+      throw new Error(`LiteLLM chat failed: ${res.status} ${detail}`);
+    }
+
+    const resp = (await res.json()) as OpenAIChatResponse;
+    if (resp.error) {
+      const msg = typeof resp.error === "string" ? resp.error : resp.error.message;
+      throw new Error(`LiteLLM chat failed: ${msg ?? "unknown error"}`);
+    }
+
+    recordUsage({
+      input_tokens: resp.usage?.prompt_tokens ?? 0,
+      output_tokens: resp.usage?.completion_tokens ?? 0,
+      model: opts.model,
+    });
+
+    return resp.choices?.[0]?.message?.content?.trim() ?? "";
+  }
+
+  throw new Error(
+    `LiteLLM chat failed after ${MAX_ATTEMPTS} attempts: ${(lastErr as Error)?.message ?? String(lastErr)}`
+  );
 }

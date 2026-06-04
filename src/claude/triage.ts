@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import type { FetchedEmail } from "../email/imap.js";
-import { askClaude } from "./client.js";
+import { askModel } from "./client.js";
 
 export type Route = "barrons_premium" | "barrons_daily" | "usps" | "spam" | "important" | "noteworthy" | "low";
 
@@ -35,7 +35,7 @@ Subject: ${email.subject}
 
 ${snippet}`;
 
-  const raw = await askClaude({
+  const raw = await askModel({
     model: config.models.triage,
     system: TRIAGE_SYSTEM,
     user,

@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import type { FetchedEmail } from "../email/imap.js";
-import { askClaude } from "./client.js";
+import { askModel } from "./client.js";
 import { stripHtml } from "./triage.js";
 
 const BARRONS_PREMIUM_SYSTEM = `You are a senior economist with 30 years of experience across macro policy, equities, portfolio construction, and risk. You have read Barron's every week for three decades. You know what matters and what is filler.
@@ -26,7 +26,7 @@ const BARRONS_DAILY_SYSTEM = `Compress this Barron's daily newsletter to ONE sen
 
 export async function analyzeBarronsPremium(email: FetchedEmail): Promise<string> {
   const body = email.text || stripHtml(email.html);
-  return await askClaude({
+  return await askModel({
     model: config.models.barronsPremium,
     system: BARRONS_PREMIUM_SYSTEM,
     user: `Subject: ${email.subject}\n\n${body.slice(0, 25000)}`,
@@ -36,7 +36,7 @@ export async function analyzeBarronsPremium(email: FetchedEmail): Promise<string
 
 export async function summarizeBarronsDaily(email: FetchedEmail): Promise<string> {
   const body = email.text || stripHtml(email.html);
-  return await askClaude({
+  return await askModel({
     model: config.models.barronsDaily,
     system: BARRONS_DAILY_SYSTEM,
     user: `Subject: ${email.subject}\n\n${body.slice(0, 4000)}`,

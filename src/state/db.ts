@@ -1,9 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, "../../data/state.db");
+const DB_PATH = path.resolve(process.cwd(), "data/state.db");
 
 let db: Database.Database | null = null;
 
@@ -18,6 +16,11 @@ function getDb(): Database.Database {
       route TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_processed_at ON processed(processed_at);
+
+    CREATE TABLE IF NOT EXISTS daily_digest_runs (
+      run_date TEXT PRIMARY KEY,
+      sent_at INTEGER NOT NULL
+    );
   `);
   return db;
 }
@@ -33,10 +36,22 @@ export function markProcessed(messageId: string, route: string): void {
     .run(messageId, Date.now(), route);
 }
 
+export function hasDailyDigestRun(runDate: string): boolean {
+  const row = getDb().prepare("SELECT 1 FROM daily_digest_runs WHERE run_date = ?").get(runDate);
+  return row !== undefined;
+}
+
+export function markDailyDigestRun(runDate: string): void {
+  getDb()
+    .prepare("INSERT OR REPLACE INTO daily_digest_runs (run_date, sent_at) VALUES (?, ?)")
+    .run(runDate, Date.now());
+}
+
 export function cleanupOldRows(olderThanDays = 90): number {
   const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
-  const info = getDb().prepare("DELETE FROM processed WHERE processed_at < ?").run(cutoff);
-  return info.changes;
+  const processedInfo = getDb().prepare("DELETE FROM processed WHERE processed_at < ?").run(cutoff);
+  const digestInfo = getDb().prepare("DELETE FROM daily_digest_runs WHERE sent_at < ?").run(cutoff);
+  return processedInfo.changes + digestInfo.changes;
 }
 
 export function closeDb(): void {

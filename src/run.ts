@@ -1,9 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { fetchRecentEmails, testConnection, type FetchedEmail } from "./email/imap.js";
-import { isProcessed, markProcessed, cleanupOldRows, closeDb } from "./state/db.js";
+import {
+  isProcessed,
+  markProcessed,
+  hasDailyDigestRun,
+  markDailyDigestRun,
+  cleanupOldRows,
+  closeDb,
+} from "./state/db.js";
 import { triageEmail, hardMatchSender } from "./claude/triage.js";
 import { analyzeBarronsPremium, summarizeBarronsDaily } from "./claude/barrons-analyst.js";
 import { extractUsps } from "./claude/usps-extractor.js";
@@ -12,17 +18,33 @@ import { formatDigestPlain, type DigestSections } from "./digest/format.js";
 import { sendTelegram } from "./telegram/send.js";
 import { getTotalUsage } from "./claude/client.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_DIR = path.resolve(__dirname, "../logs");
+const LOG_DIR = path.resolve(process.cwd(), "logs");
 
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
 const TEST_CONN = args.has("--test-connection");
+const SCHEDULED = args.has("--scheduled");
 
 async function main(): Promise<void> {
   if (TEST_CONN) {
     await testConnection();
     return;
+  }
+
+  const scheduledDate = SCHEDULED && !DRY_RUN ? getScheduledRunDate(new Date()) : null;
+  if (scheduledDate) {
+    if (!scheduledDate.isDue) {
+      console.log(
+        `[${new Date().toISOString()}] Scheduled run skipped — ${scheduledDate.timeLabel} ${config.schedule.timezone} is before ${scheduledDate.targetLabel}.`
+      );
+      closeDb();
+      return;
+    }
+    if (hasDailyDigestRun(scheduledDate.dateKey)) {
+      console.log(`[${new Date().toISOString()}] Scheduled run skipped — digest already sent for ${scheduledDate.dateKey}.`);
+      closeDb();
+      return;
+    }
   }
 
   console.log(`[${new Date().toISOString()}] Starting run${DRY_RUN ? " (DRY RUN)" : ""}`);
@@ -66,10 +88,18 @@ async function main(): Promise<void> {
 
   if (DRY_RUN) {
     console.log("DRY RUN — not sending to Telegram.");
-  } else if (fresh.length === 0) {
-    console.log("No new emails — skipping Telegram send.");
   } else {
+    if (fresh.length > 0 && sections.errorCount === fresh.length) {
+      console.error(
+        "All emails failed during processing; skipping Telegram send and daily sent marker so scheduled catch-up can retry."
+      );
+      cleanupOldRows(90);
+      closeDb();
+      process.exitCode = 1;
+      return;
+    }
     await sendTelegram(digest);
+    if (scheduledDate) markDailyDigestRun(scheduledDate.dateKey);
     console.log("Digest sent to Telegram.");
   }
 
@@ -118,6 +148,30 @@ async function handleEmail(email: FetchedEmail, out: DigestSections): Promise<vo
   } else {
     out.lowCount++;
   }
+}
+
+function getScheduledRunDate(now: Date): { dateKey: string; isDue: boolean; timeLabel: string; targetLabel: string } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: config.schedule.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const hour = Number(values.hour);
+  const minute = Number(values.minute);
+  const targetHour = config.schedule.hour;
+
+  return {
+    dateKey: `${values.year}-${values.month}-${values.day}`,
+    isDue: hour >= targetHour,
+    timeLabel: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+    targetLabel: `${String(targetHour).padStart(2, "0")}:00`,
+  };
 }
 
 function writeUsageLog(usage: ReturnType<typeof getTotalUsage>): void {

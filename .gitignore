@@ -10,3 +10,5 @@ logs/*.log
 logs/*.jsonl
 .DS_Store
 *.swp
+.claude/
+.vscode/
